@@ -1,0 +1,915 @@
+---
+title: "PRS of psychotic MDD"
+author: "Thuy-Dung Nguyen"
+date: '2024-12-09'
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+This document is a supplementary file for the manuscript: Genetic insights into psychotic major depressive disorder: bridging the mood-psychotic disorder spectrum
+doi: 10.1016/j.ebiom.2025.105576.
+
+Corresponding author: 
+Yi Lu, Ph.D.
+Nobels Väg 12A, 
+Solna, Sweden 17177  
+lu.yi@ki.se 
+Responsible for this code file
+Thuy-Dung Nguyen
+Nobels Väg 12A, 
+Solna, Sweden 17177  
+thuy.dung.nguyen@ki.se
+
+# Prepare environment
+```{r setup, include=FALSE, echo=FALSE}
+library(data.table)
+library(tidyverse)
+```
+
+# I. Extracting phenotype from UKB
+```{bash}
+# use  ukb22140.tab
+# Find out the column numbers of the field of interest
+head -1 /file_path/ukb48847.tab |tr -s "\t" "\n" | cat -n |grep -nF f.41202.
+# This is to just get the column index
+head -1 /file_path/ukb48847.tab |tr -s "\t" "\n" | cat -n |grep -n f.eid|cut -d: -f1
+
+# Build a list for field names
+var_list=(eid f.41202. f.41204.)
+index_array=()
+for i in ${var_list[*]}
+    do
+        index_array+=($(head -1 /file_path/ukb48847.tab |tr -s "\t" "\n" | cat -n |grep -n $i |cut -d: -f1))
+    done
+
+# Buil a string from the index_array
+index_str=" "
+for i in ${index_array[*]}
+    do
+        index_str="${index_str}${i},"
+    done
+index_str=${index_str::-1}
+
+# To check the index_string
+echo "${index_str[*]}"
+
+# Extract column using indexes (the cut option -f takes only string as argument)
+cut -f $index_str /file_path/ukb48847.tab >  /file_path/ukb211014_41202_41204.tab
+
+# Get EU ancestry from Uppmax
+/file_path/ancestraloutliers_3sd.fid.iid 
+```
+
+#######################################
+# II. Main analysis (no hierrachy)
+Comparing mean PRS of MDD, SCZ and BP between 3 groups: 
+-	Psychotic MDD (F323, F333)
+-	Non-psychotic MDD
+-	Non-MDD 
+Estimating OR for psychotic compared with non-psychotic MDD associated with 1 SD increase in PRS of MDD, SCZ, BP.
+
+MDD cases are defined using ICD codes. 
+Primary or secondary diagnosis of a depressive mood disorder from linked hospital admission records.
+ICD code F32, F33 for field 41202 (primary diagnosis) or 41204 (secondary diagnosis) 
+
+1. Strict definition
+Psychotic MDD = F323, F333
+Non-psychotic = Other F32 F33 codes
+
+2. Broad definition
+Psychotic MDD = F323, F333 or primary MDD diagnosis + any psychotic mood/non-mood (F30.2, F31.2, F31.5, F31.64 if available, F20, F21, F22, F23, F24, F25, F28, F29)
+Non-psychotic = Other MDD cases
+ 
+## Load data
+```{r}
+# updated withdrawal 2021
+withdraw <- fread("/file_path/withdrawal_list_20210809.csv", header = F)
+names(withdraw)[1] <- c("eid")
+
+dficd <- as.data.table(fread("/file_path/ukb211014_41202_41204.tab", header = TRUE))
+names(dficd)[1] = "eid"
+
+pop_outlier <- fread("file_path/ancestraloutliers_3sd.fid.iid", header = F)
+names(pop_outlier) = c("fid", "eid")
+```
+
+## Define variable
+```{r}
+icd_ukb=unique(as.vector(as.matrix(dficd[,2:260])))
+```
+
+Filter those who have ICD code F32, F33 for field 41202 (primary diagnosis) or 41204 (secondary diagnosis) 
+```{r}
+mdd_list=c()
+for (i in c("F32", "F33")) {
+    mdd_list = append(mdd_list, (grep(i, icd_ukb, fixed=F, value = T)))
+}
+
+severe_mdd_code10=c()
+for (i in c("^F322", "^F332", "^F323", "^F333")) {
+    severe_mdd_code10 = unique(append(severe_mdd_code10, (grep(i, icd_ukb, fixed=F, value = T))))
+}
+
+psychotic = c("F323", "F333")
+
+# Check if there is any MDD code in each ID
+dficd$mdd <- as.numeric(apply(dficd[, 2:260], 1, function(x) any(x %in% mdd_list)))
+
+dficd$severe_mdd <- as.numeric(apply(dficd[, 2:260], 1, function(x) any(x %in% severe_mdd_code10)))
+
+dficd$psychotic_mdd <- as.numeric(apply(dficd[, 2:260], 1, function(x) any(x %in% psychotic)))
+
+# Severe psychotic MDD as 3
+dficd$severe_mdd[dficd$severe_mdd==1 & dficd$psychotic_mdd==1] <- 3
+# Severe non-psychotic as 2
+dficd$severe_mdd[dficd$severe_mdd==1 & dficd$psychotic_mdd==0 ] <- 2
+# Mild/moderate MDD as 1
+dficd$severe_mdd[dficd$severe_mdd==0 & dficd$mdd==1 ] <- 1
+# Non-mdd as 0
+dficd$severe_mdd[dficd$severe_mdd==0 & dficd$mdd==0 ] <- 0
+
+# Recode psychotic mdd
+dficd$psychotic_mdd[dficd$psychotic_mdd==1] <- 2
+dficd$psychotic_mdd[dficd$psychotic_mdd==0 & dficd$mdd==1 ] <- 1
+
+table(dficd$mdd, dficd$psychotic_mdd, useNA = 'ifany')
+table(dficd$mdd, dficd$severe_mdd, useNA = 'ifany')
+table(dficd$severe_mdd, dficd$psychotic_mdd, useNA = 'ifany')
+```
+
+```{r}
+# Just to have a look how the value look like
+# Make a list of code in the data file to include
+icd_psycho = c('F323', 'F333', 'F302', 'F312', 'F315', 'F3164', 'F20', 'F21', 'F22', 'F23', 'F24', 'F25', 'F28', 'F29')
+psycho_list=c()
+for (i in icd_psycho) {
+    psycho_list = append(psycho_list, (grep(i, icd_ukb, fixed=F, value = T)))
+}
+
+# Field 41202 is primary diagnosis
+dficd$pri_mdd <- as.numeric(apply(dficd[, 2:76], 1, function(x) any(x %in% mdd_list)))
+
+dficd$psychotic <- as.numeric(apply(dficd[, 2:260], 1, function(x) any(x %in% psycho_list)))
+
+dficd <- dficd %>%
+  mutate(broadPsyMDD = ifelse(psychotic_mdd==2  | (pri_mdd==1 & psychotic==1), 1, 0))
+
+dficd$broadPsyMDD[dficd$broadPsyMDD==1] <- 2
+dficd$broadPsyMDD[dficd$broadPsyMDD==0 & dficd$mdd==1 ] <- 1
+```
+
+```{r}
+dficd <- dficd %>%
+  anti_join(., withdraw, by="eid") %>%
+  anti_join (., pop_outlier, by="eid") %>%
+  select(., c("eid", "mdd", "severe_mdd", "psychotic_mdd", "broadPsyMDD"))
+
+table(dficd$severe_mdd, useNA = 'ifany')
+
+write_delim(dficd, "/file_path/ukb_MDDpsychotic_2024feb.txt", delim = " ", na = "NA", col_names = T)
+```
+
+## Prepare data for analyses
+```{r}
+pheno <- fread('/file_path/ukb_MDDpsychotic_2024feb.txt')
+
+bp <- fread("/file_path/bip_2021_noUKB.ma.sscore") %>%
+  as.data.frame() %>%
+  rename(eid=IID, bp=SCORE1_AVG) %>%
+  select(c(eid, bp))
+  
+bp1 <- fread("/file_path/bip_type1/bip2021_type1_noUKB.ma.sscore") %>% 
+  as.data.frame() %>%
+  rename(eid=IID, bp1=SCORE1_AVG) %>%
+  select(c(eid, bp1))
+
+bp2 <- fread("/file_path/bip_type2/bip2021_type2_noUKB.ma.sscore") %>% as.data.frame() %>%
+  rename(eid=IID, bp2=SCORE1_AVG) %>%
+  select(c(eid, bp2))
+
+prs <- fread("/file_path/euronly_pgs.tsv") %>% 
+  as.data.frame() %>% 
+  dplyr::select(c("f.eid", "mdd_no23noUKB_2018", "scz2021", "age", "sex", "PC1", "PC2","PC3", "PC4", "PC5")) %>%
+  rename(eid = f.eid) %>%
+  inner_join(bp, by='eid') %>%
+  inner_join(bp1, by='eid') %>%
+  inner_join(bp2, by='eid') %>%
+  inner_join(pheno, by='eid') %>%
+  mutate(bp = as.numeric(scale(bp)),
+         bp1 = as.numeric(scale(bp1)),
+         bp2 = as.numeric(scale(bp2)),
+         mdd_no23noUKB_2018 = as.numeric(scale(mdd_no23noUKB_2018)),
+         scz2021 = as.numeric(scale(scz2021)))
+
+# 1 = male, 2 = female
+```
+
+## PRS regression, not adjusting for sex, age
+### Compare psychotic and non-psychotic MDD
+The old results that were generated by Arvid Harder 
+### Compare PRS between psychotic MDD and severe non-psychotic MDD
+Define a new variable severe_mdd using the old definition of psychotic MDD (not excluding SCZ, BD)
+Rerun regression models comparing psychotic MDD and severe non-psychoitic MDD 
+*Add in eTable 15b
+
+```{r}
+# Sample size
+table(prs$severe_mdd, useNA = 'ifany')
+data <- prs %>%
+  filter(severe_mdd %in% c(2, 3) ) %>%
+  mutate(severe_mdd=as.factor(severe_mdd-2))
+
+table(data$severe_mdd, useNA = 'ifany')
+
+############### Single PRS ################
+grsList = c("mdd_no23noUKB_2018", "scz2021", "bp", "bp1", "bp2")
+### regression analysis function
+
+dt <-  data.frame(model=character(),trait=character(),
+                 beta=numeric(),se=numeric(),P=numeric())
+
+
+  ## loop for regression
+for (grs in grsList) {
+    reg <- glm(paste0('severe_mdd ~ ', grs, ' + PC1 + PC2 + PC3 + PC4 + PC5'), data=data, family="binomial")
+    
+    # put in the excel
+    dt <-dt %>% 
+      add_row(model=paste('uni'),
+              trait=paste(grs), 
+              beta = summary(reg)$coef[paste(grs),"Estimate"],
+              se = summary(reg)$coef[paste(grs),"Std. Error"],
+              P=summary(reg)$coef[paste(grs),"Pr(>|z|)"])
+    }
+dt <-dt %>% 
+  mutate(or=round(exp(beta), 2),
+         lo=round(exp(beta-1.96*se),2),
+         hi=round(exp(beta+1.96*se),2))
+
+write.csv(dt, file = "/file_path/ukb_prs_severeMDD_main_result_uni.csv", row.names = FALSE)
+
+############### Multiple PRS ################
+reg <- glm(severe_mdd ~ mdd_no23noUKB_2018 + scz2021 + bp + PC1 + PC2 + PC3 + PC4 + PC5, data=data, family="binomial")
+
+summary(reg)$coef 
+
+dt2 <- as.data.table(summary(reg)$coef[c('mdd_no23noUKB_2018', 'scz2021','bp'),c("Estimate","Std. Error", "Pr(>|z|)")], keep.rownames = T)
+names(dt2) <- c('prs', 'beta', 'se', 'P')
+
+dt2 <-dt2 %>%
+  mutate(model = 'multi') %>%
+  dplyr::select(c(model, prs, beta, se, P)) 
+  
+
+# Add bp subtype results
+
+grsList = c("bp1", "bp2")
+
+for (grs in grsList) {
+    reg <- glm(paste0('severe_mdd ~ ', grs, ' + mdd_no23noUKB_2018 + scz2021 + PC1 + PC2 + PC3 + PC4 + PC5'), data=data, family="binomial")
+    # put in the excel
+    dt2 <-dt2 %>% 
+      add_row(model='multi',
+              prs=paste(grs), 
+              beta = summary(reg)$coef[paste(grs),"Estimate"],
+              se = summary(reg)$coef[paste(grs),"Std. Error"],
+              P=summary(reg)$coef[paste(grs),"Pr(>|z|)"])
+}
+
+dt2 <-dt2 %>% 
+  mutate(or=round(exp(beta), 2),
+         lo=round(exp(beta-1.96*se),2),
+         hi=round(exp(beta+1.96*se),2))
+
+write.csv(dt2, file = "/file_path/ukb_prs_severeMDD_main_result_multi.csv", row.names = FALSE)
+```
+
+## PRS regression, adjusting for sex, age
+### Compare psychotic MDD vs non-psychotic MDD
+```{r}
+# Sample size
+table(prs$psychotic_mdd, useNA = 'ifany')
+table(prs$age, useNA = 'ifany')
+
+data <- prs %>%
+  filter(psychotic_mdd !=0) %>%
+  mutate(psychotic_mdd=as.factor(psychotic_mdd-1)) %>%
+  rename(psyMDD=psychotic_mdd)
+
+table(data$psyMDD, useNA = 'ifany')
+
+############### Single PRS ################
+grsList1 = c("mdd_no23noUKB_2018", "scz2021", "bp", "bp1", "bp2")
+### regression analysis function
+
+dt <-  data.frame(model=character(),trait=character(),
+                 beta=numeric(),se=numeric(),P=numeric())
+
+
+  ## loop for regression
+for (grs in grsList1) {
+    reg_j <- glm(paste0('psyMDD ~ ', grs, ' + PC1 + PC2 + PC3 + PC4 + PC5 + sex + age'), data=data, family="binomial")
+    
+    # put in the excel
+    dt <-dt %>% 
+      add_row(model=paste('uni'),
+              trait=paste(grs), 
+              beta = summary(reg_j)$coef[paste(grs),"Estimate"],
+              se = summary(reg_j)$coef[paste(grs),"Std. Error"],
+              P=summary(reg_j)$coef[paste(grs),"Pr(>|z|)"])
+    }
+dt <-dt %>% 
+  mutate(or=round(exp(beta), 2),
+         lo=round(exp(beta-1.96*se),2),
+         hi=round(exp(beta+1.96*se),2))
+
+write.csv(dt, file = "/file_path/ukb_prs_agesex_uni.csv", row.names = FALSE)
+
+############### Multiple PRS ################
+
+reg <- glm(psyMDD ~ mdd_no23noUKB_2018 + scz2021 + bp + PC1 + PC2 + PC3 + PC4 + PC5 + sex + age, data=data, family="binomial")
+
+summary(reg)$coef 
+
+dt2 <- as.data.table(summary(reg)$coef[c('mdd_no23noUKB_2018', 'scz2021','bp'),c("Estimate","Std. Error", "Pr(>|z|)")], keep.rownames = T)
+
+# Add bp subtype results
+
+grsList2 = c("bp1", "bp2")
+
+for (grs in grsList2) {
+    reg_i <- glm(paste0('psyMDD ~ ', grs, ' + mdd_no23noUKB_2018 + scz2021 + PC1 + PC2 + PC3 + PC4 + PC5 + sex + age'), data=data, family="binomial")
+    # put in the excel
+    dt2 <-dt2 %>% 
+      add_row(as.data.table(summary(reg_i)$coef[c('mdd_no23noUKB_2018', 'scz2021',grs),c("Estimate","Std. Error", "Pr(>|z|)")], keep.rownames = T))
+}
+
+names(dt2) <- c('prs', 'beta', 'se', 'P')
+
+dt2 <-dt2 %>% 
+  mutate(or=round(exp(beta), 2),
+         lo=round(exp(beta-1.96*se),2),
+         hi=round(exp(beta+1.96*se),2))
+
+write.csv(dt2, file = "/file_path/ukb_prs_agesex_multi.csv", row.names = FALSE)
+```
+
+### Compare psychotic MDD vs severe non-psychotic MDD
+Rerun regression models comparing psychotic MDD and severe non-psychoitic MDD 
+*Add in eTable 14b
+
+```{r}
+# Sample size
+table(prs$severe_mdd, useNA = 'ifany')
+
+data <- prs %>%
+  filter(severe_mdd %in% c(2, 3) ) %>%
+  mutate(severe_mdd=as.factor(severe_mdd-2))
+
+table(data$severe_mdd, useNA = 'ifany')
+
+############### Single PRS ################
+grsList = c("mdd_no23noUKB_2018", "scz2021", "bp", "bp1", "bp2")
+### regression analysis function
+
+dt <-  data.frame(model=character(),trait=character(),
+                 beta=numeric(),se=numeric(),P=numeric())
+
+
+  ## loop for regression
+for (grs in grsList) {
+    reg_k <- glm(paste0('severe_mdd ~ ', grs, ' + PC1 + PC2 + PC3 + PC4 + PC5 + sex + age'), data=data, family="binomial")
+    
+    # put in the excel
+    dt <-dt %>% 
+      add_row(model=paste('uni'),
+              trait=paste(grs), 
+              beta = summary(reg_k)$coef[paste(grs),"Estimate"],
+              se = summary(reg_k)$coef[paste(grs),"Std. Error"],
+              P=summary(reg_k)$coef[paste(grs),"Pr(>|z|)"])
+    }
+dt <-dt %>% 
+  mutate(or=round(exp(beta), 2),
+         lo=round(exp(beta-1.96*se),2),
+         hi=round(exp(beta+1.96*se),2))
+
+write.csv(dt, file = "/nfs/home/thingu/psychoticMDD/prs_analysis/results/ukb_prs_agesex_severeMDD_uni.csv", row.names = FALSE)
+
+############### Multiple PRS ################
+reg <- glm(severe_mdd ~ mdd_no23noUKB_2018 + scz2021 + bp + PC1 + PC2 + PC3 + PC4 + PC5 + sex + age, data=data, family="binomial")
+
+summary(reg)$coef 
+
+dt2 <- as.data.table(summary(reg)$coef[c('mdd_no23noUKB_2018', 'scz2021','bp'),c("Estimate","Std. Error", "Pr(>|z|)")], keep.rownames = T)
+
+# Add bp subtype results
+
+grsList2 = c("bp1", "bp2")
+
+for (grs in grsList2) {
+    reg_h <- glm(paste0('severe_mdd ~ ', grs, ' + mdd_no23noUKB_2018 + scz2021 + PC1 + PC2 + PC3 + PC4 + PC5 + sex + age'), data=data, family="binomial")
+    # put in the excel
+    dt2 <-dt2 %>% 
+      add_row(as.data.table(summary(reg_h)$coef[c('mdd_no23noUKB_2018', 'scz2021', grs),c("Estimate","Std. Error", "Pr(>|z|)")], keep.rownames = T))
+}
+
+names(dt2) <- c('prs', 'beta', 'se', 'P')
+
+dt2 <-dt2 %>% 
+  mutate(or=round(exp(beta), 2),
+         lo=round(exp(beta-1.96*se),2),
+         hi=round(exp(beta+1.96*se),2))
+
+write.csv(dt2, file = "/file_path/ukb_prs_agesex_severeMDD_multi.csv", row.names = FALSE)
+```
+
+### Compare psychotic MDD, non-psychotic MDD vs non-MDD in UKB
+*Add in eTable 15
+
+```{r}
+# Sample size
+table(prs$psychotic_mdd, useNA = 'ifany')
+
+data_nonpsy <- prs %>%
+  filter(psychotic_mdd %in% c(0, 1) ) %>%
+  mutate(nonpsyMDD=as.factor(psychotic_mdd))
+
+table(data_nonpsy$nonpsyMDD, useNA = 'ifany')
+
+##############
+uni_nonpsy <- glm(nonpsyMDD ~ mdd_no23noUKB_2018 + PC1 + PC2 + PC3 + PC4 + PC5 + sex + age, data=data_nonpsy, family="binomial")
+
+res1 <- as.data.table(summary(uni_nonpsy)$coef[,c("Estimate","Std. Error", "Pr(>|z|)")], keep.rownames = T)
+names(res1) <- c('var', 'beta', 'se', 'P')
+res1 <-res1 %>% 
+  mutate(or=round(exp(beta), 2),
+         lo=round(exp(beta-1.96*se),2),
+         hi=round(exp(beta+1.96*se),2)) %>% 
+  select(c('var','or', 'lo', 'hi', 'P'))
+
+##############
+multi_nonpsy <- glm(nonpsyMDD ~ mdd_no23noUKB_2018 + scz2021 + bp + PC1 + PC2 + PC3 + PC4 + PC5 + sex + age, data=data_nonpsy, family="binomial")
+
+res2 <- as.data.table(summary(multi_nonpsy)$coef[,c("Estimate","Std. Error", "Pr(>|z|)")], keep.rownames = T)
+names(res2) <- c('var', 'beta', 'se', 'P')
+res2 <-res2 %>% 
+  mutate(or=round(exp(beta), 2),
+         lo=round(exp(beta-1.96*se),2),
+         hi=round(exp(beta+1.96*se),2)) %>% 
+  select(c('var','or', 'lo', 'hi', 'P'))
+
+#######################################
+
+data_psy <- prs %>%
+  filter(psychotic_mdd %in% c(0, 2) ) %>%
+  mutate(psyMDD = ifelse(psychotic_mdd==2, 1, 0)) %>%
+  mutate(psyMDD=as.factor(psyMDD))
+
+table(data_psy$psyMDD, useNA = 'ifany')
+
+uni_psy <- glm(psyMDD ~ mdd_no23noUKB_2018 + PC1 + PC2 + PC3 + PC4 + PC5 + sex + age, data=data_psy, family="binomial")
+
+res3 <- as.data.table(summary(uni_psy)$coef[,c("Estimate","Std. Error", "Pr(>|z|)")], keep.rownames = T)
+
+names(res3) <- c('var', 'beta', 'se', 'P')
+
+res3 <-res3 %>% 
+  mutate(or=round(exp(beta), 2),
+         lo=round(exp(beta-1.96*se),2),
+         hi=round(exp(beta+1.96*se),2)) %>% 
+  select(c('var','or', 'lo', 'hi', 'P'))
+
+##############
+
+multi_psy <- glm(psyMDD ~ mdd_no23noUKB_2018 + scz2021 + bp + PC1 + PC2 + PC3 + PC4 + PC5 + sex + age, data=data_psy, family="binomial")
+
+res4 <- as.data.table(summary(multi_psy)$coef[,c("Estimate","Std. Error", "Pr(>|z|)")], keep.rownames = T)
+
+names(res4) <- c('var', 'beta', 'se', 'P')
+
+res4 <-res4 %>% 
+  mutate(or=round(exp(beta), 2),
+         lo=round(exp(beta-1.96*se),2),
+         hi=round(exp(beta+1.96*se),2)) %>% 
+  select(c('var','or', 'lo', 'hi', 'P'))
+
+```
+
+
+#######################################
+# III. Sensitivity analysis where BP is removed from all MDD, SCZ is removed from psychotic MDD
+
+Phenotype definition
+
+MDD cases are defined using ICD codes. 
+Primary or secondary diagnosis of a depressive mood disorder from linked hospital admission records.
+ICD code F32, F33 for field 41202 (primary diagnosis) or 41204 (secondary diagnosis) 
+
+MDD = F32, F33 exclude BP
+Among MDD:
+Psychotic MDD = F323, F333 exclude SCZ, SAD
+Non-psychotic = Other F32 F33 codes
+
+Non-MDD: Use the exclusion criteria in study 1, not having any of 7 definition of MD
+Not included in any of 7 MD definitions (CIDI-based MDD, ICD-coded MDD, Probable MD, Self-reported MD, MD cardinal symptoms, Help-seeking MD, Antidepressant use)
+
+## Load data
+```{r}
+# updated withdrawal 2021
+withdraw <- fread("/file_path/withdrawal_list_20210809.csv", header = F)
+names(withdraw)[1] <- c("eid")
+
+dficd <- as.data.table(fread("/file_path/ukb211014_41202_41204.tab", header = TRUE))
+names(dficd)[1] = "eid"
+
+pop_outlier <- fread("/file_path/ancestraloutliers_3sd.fid.iid", header = F)
+names(pop_outlier) = c("fid", "eid")
+
+```
+## Define variable
+```{r}
+icd_ukb=unique(as.vector(as.matrix(dficd[,2:260])))
+```
+
+Filter those who have ICD code F32, F33 for field 41202 (primary diagnosis) or 41204 (secondary diagnosis) 
+```{r}
+mdd_code10=c()
+for (i in c("^F32", "^F33")) {
+    mdd_code10 = unique(append(mdd_code10, (grep(i, icd_ukb, fixed=F, value = T))))
+}
+
+severe_mdd_code10=c()
+for (i in c("^F322", "^F332", "^F323", "^F333")) {
+    severe_mdd_code10 = unique(append(severe_mdd_code10, (grep(i, icd_ukb, fixed=F, value = T))))
+}
+
+psyMDD10_codes = c()
+for (i in c("^F323", "^F333")) {
+    psyMDD10_codes = unique(append(psyMDD10_codes, (grep(i, icd_ukb, fixed=F, value = T))))
+}
+
+# Bipolar and mania
+bp_code10 = c()
+for (i in c("^F30", "^F31")) {
+  bp_code10 = unique(append(bp_code10, grep(i, icd_ukb, fixed=F, value = T)))
+  }
+
+# Schizophrenia
+scz_code10 = c()
+for (i in c("^F20", "^F25")) {
+  scz_code10 = unique(append(scz_code10, grep(i, icd_ukb, fixed=F, value = T)))
+  }
+
+# Check if there is any code in each ID
+dficd$mdd_temp <- as.numeric(apply(dficd[, 2:260], 1, function(x) any(x %in% mdd_code10)))
+
+dficd$severe_mdd_temp <- as.numeric(apply(dficd[, 2:260], 1, function(x) any(x %in% severe_mdd_code10)))
+
+dficd$psychotic_mdd_tempt <- as.numeric(apply(dficd[, 2:260], 1, function(x) any(x %in% psyMDD10_codes)))
+
+dficd$bp <- as.numeric(apply(dficd[, 2:260], 1, function(x) any(x %in% bp_code10)))
+
+dficd$scz <- as.numeric(apply(dficd[, 2:260], 1, function(x) any(x %in% scz_code10)))
+```
+
+```{r}
+dficd <- dficd %>%
+  # apply hierarchy
+  mutate(mdd = ifelse(bp==0 & mdd_temp==1, 1, 0),
+         severe_mdd = ifelse(bp==0 & severe_mdd_temp==1, 1, 0),
+         psyMDD = ifelse(bp==0 & scz==0 & psychotic_mdd_tempt==1, 1, 0)
+         ) 
+
+table(dficd$mdd, dficd$psyMDD, useNA = 'ifany')
+table(dficd$mdd, dficd$severe_mdd, useNA = 'ifany')
+table(dficd$severe_mdd, dficd$psyMDD, useNA = 'ifany')
+
+# Severe psychotic MDD as 3
+dficd$severe_mdd[dficd$severe_mdd==1 & dficd$psyMDD==1] <- 3
+# Severe non-psychotic as 2
+dficd$severe_mdd[dficd$severe_mdd==1 & dficd$psyMDD==0 ] <- 2
+# Mild/moderate MDD as 1
+dficd$severe_mdd[dficd$severe_mdd==0 & dficd$mdd==1 ] <- 1
+# Non-mdd as 0
+dficd$severe_mdd[dficd$severe_mdd==0 & dficd$mdd==1 ] <- 0
+
+# Recode psychotic MDD as 1 and 2
+dficd$psyMDD[dficd$psyMDD==1] <- 2
+dficd$psyMDD[dficd$psyMDD==0 & dficd$mdd==1 ] <- 1
+
+dficd <- dficd %>%
+  anti_join(withdraw, by="eid") %>%
+  anti_join (pop_outlier[, c('eid')], by="eid") %>%
+  dplyr::select(c("eid", "mdd", "severe_mdd", "psyMDD"))
+```
+
+```{r}
+#old samplesize 
+#542 +25851 + 433138
+
+write_delim(dficd, "/file_path/ukb_psychoticMDD_hierarchy_2024feb.txt", delim = " ", na = "NA", col_names = T)
+```
+
+## Prepare data
+```{r}
+library(data.table)
+library(tidyverse)
+
+pheno <- fread('/file_path/ukb_psychoticMDD_hierarchy_2024feb.txt')
+
+bp <- fread("/file_path/bip_2021_noUKB.ma.sscore") %>%
+  as.data.frame() %>%
+  rename(eid=IID, bp=SCORE1_AVG) %>%
+  select(c(eid, bp))
+  
+bp1 <- fread("/file_path/bip_type1/bip2021_type1_noUKB.ma.sscore") %>% 
+  as.data.frame() %>%
+  rename(eid=IID, bp1=SCORE1_AVG) %>%
+  select(c(eid, bp1))
+
+bp2 <- fread("/file_path/bip_type2/bip2021_type2_noUKB.ma.sscore") %>% as.data.frame() %>%
+  rename(eid=IID, bp2=SCORE1_AVG) %>%
+  select(c(eid, bp2))
+
+prs_hierarchy <- fread("/file_path/euronly_pgs.tsv") %>% 
+  as.data.frame() %>% 
+  dplyr::select(c("f.eid", "mdd_no23noUKB_2018", "scz2021", "age", "sex", "PC1", "PC2","PC3", "PC4", "PC5")) %>%
+  rename(eid = f.eid) %>%
+  inner_join(bp, by='eid') %>%
+  inner_join(bp1, by='eid') %>%
+  inner_join(bp2, by='eid') %>%
+  inner_join(pheno, by='eid') %>%
+  mutate(bp = as.numeric(scale(bp)),
+         bp1 = as.numeric(scale(bp1)),
+         bp2 = as.numeric(scale(bp2)),
+         mdd_no23noUKB_2018 = as.numeric(scale(mdd_no23noUKB_2018)),
+         scz2021 = as.numeric(scale(scz2021)))
+```
+
+## PRS regression, not adjusting for sex, age
+### Compare psychotic vs non-psychotic MDD
+```{r}
+# Sample size
+table(prs_hierarchy$psyMDD, useNA = 'ifany')
+
+data <- prs_hierarchy %>%
+  filter(psyMDD !=0) %>%
+  mutate(psyMDD=as.factor(psyMDD-1))
+
+############### Single PRS ################
+grsList = c("mdd_no23noUKB_2018", "scz2021", "bp", "bp1", "bp2")
+### regression analysis function
+
+dt <-  data.frame(model=character(),trait=character(),
+                 beta=numeric(),se=numeric(),P=numeric())
+
+
+  ## loop for regression
+for (grs in grsList) {
+    reg <- glm(paste0('psyMDD ~ ', grs, ' + PC1 + PC2 + PC3 + PC4 + PC5'), data=data, family="binomial")
+    
+    # put in the excel
+    dt <-dt %>% 
+      add_row(model=paste('uni'),
+              trait=paste(grs), 
+              beta = summary(reg)$coef[paste(grs),"Estimate"],
+              se = summary(reg)$coef[paste(grs),"Std. Error"],
+              P=summary(reg)$coef[paste(grs),"Pr(>|z|)"])
+    }
+
+write.csv(dt, file = "/file_path/ukb_prs_result_uni.csv", row.names = FALSE)
+
+############### Multiple PRS ################
+reg <- glm(psyMDD ~ mdd_no23noUKB_2018 + scz2021 + bp + PC1 + PC2 + PC3 + PC4 + PC5, data=data, family="binomial")
+
+summary(reg)$coef 
+
+dt2 <- as.data.table(summary(reg)$coef[c('mdd_no23noUKB_2018', 'scz2021','bp'),c("Estimate","Std. Error", "Pr(>|z|)")], keep.rownames = T)
+names(dt2) <- c('prs', 'beta', 'se', 'P')
+
+dt2 <-dt2 %>%
+  mutate(model = 'multi') %>%
+  dplyr::select(c(model, prs, beta, se, P)) 
+  
+
+# Add bp subtype results
+
+grsList = c("bp1", "bp2")
+
+for (grs in grsList) {
+    reg <- glm(paste0('psyMDD ~ ', grs, ' + mdd_no23noUKB_2018 + scz2021 + PC1 + PC2 + PC3 + PC4 + PC5'), data=data, family="binomial")
+    # put in the excel
+    dt2 <-dt2 %>% 
+      add_row(model='multi',
+              prs=paste(grs), 
+              beta = summary(reg)$coef[paste(grs),"Estimate"],
+              se = summary(reg)$coef[paste(grs),"Std. Error"],
+              P=summary(reg)$coef[paste(grs),"Pr(>|z|)"])
+}
+
+write.csv(dt2, file = "/file_path/ukb_prs_result_multi.csv", row.names = FALSE)
+```
+
+### Compare psychotic MDD vs severe non-psychotic MDD 
+```{r}
+# Sample size
+table(prs_hierarchy$severe_mdd, useNA = 'ifany')
+
+data <- prs_hierarchy %>%
+  filter(severe_mdd %in% c(2, 3) ) %>%
+  mutate(severe_mdd=as.factor(severe_mdd-2))
+
+table(data$severe_mdd, useNA = 'ifany')
+
+############### Single PRS ################
+grsList = c("mdd_no23noUKB_2018", "scz2021", "bp", "bp1", "bp2")
+### regression analysis function
+
+dt <-  data.frame(model=character(),trait=character(),
+                 beta=numeric(),se=numeric(),P=numeric())
+
+
+  ## loop for regression
+for (grs in grsList) {
+    reg <- glm(paste0('severe_mdd ~ ', grs, ' + PC1 + PC2 + PC3 + PC4 + PC5'), data=data, family="binomial")
+    
+    # put in the excel
+    dt <-dt %>% 
+      add_row(model=paste('uni'),
+              trait=paste(grs), 
+              beta = summary(reg)$coef[paste(grs),"Estimate"],
+              se = summary(reg)$coef[paste(grs),"Std. Error"],
+              P=summary(reg)$coef[paste(grs),"Pr(>|z|)"])
+    }
+
+write.csv(dt, file = "/file_path/ukb_prs_severeMDD_result_uni.csv", row.names = FALSE)
+
+############### Multiple PRS ################
+reg <- glm(severe_mdd ~ mdd_no23noUKB_2018 + scz2021 + bp + PC1 + PC2 + PC3 + PC4 + PC5, data=data, family="binomial")
+
+summary(reg)$coef 
+
+dt2 <- as.data.table(summary(reg)$coef[c('mdd_no23noUKB_2018', 'scz2021','bp'),c("Estimate","Std. Error", "Pr(>|z|)")], keep.rownames = T)
+names(dt2) <- c('prs', 'beta', 'se', 'P')
+
+dt2 <-dt2 %>%
+  mutate(model = 'multi') %>%
+  dplyr::select(c(model, prs, beta, se, P)) 
+  
+
+# Add bp subtype results
+
+grsList = c("bp1", "bp2")
+
+for (grs in grsList) {
+    reg <- glm(paste0('severe_mdd ~ ', grs, ' + mdd_no23noUKB_2018 + scz2021 + PC1 + PC2 + PC3 + PC4 + PC5'), data=data, family="binomial")
+    # put in the excel
+    dt2 <-dt2 %>% 
+      add_row(model='multi',
+              prs=paste(grs), 
+              beta = summary(reg)$coef[paste(grs),"Estimate"],
+              se = summary(reg)$coef[paste(grs),"Std. Error"],
+              P=summary(reg)$coef[paste(grs),"Pr(>|z|)"])
+}
+
+write.csv(dt2, file = "/file_path/ukb_prs_severeMDD_result_multi.csv", row.names = FALSE)
+```
+
+## PRS regression, adjusting for sex, age
+### Compare psychotic MDD vs non-psychotic MDD
+
+```{r}
+# Sample size
+table(prs_hierarchy$psyMDD, useNA = 'ifany')
+
+data <- prs_hierarchy %>%
+  filter(psyMDD !=0) %>%
+  mutate(psyMDD=as.factor(psyMDD-1)) 
+
+table(data$psyMDD, useNA = 'ifany')
+
+############### Single PRS ################
+grsList1 = c("mdd_no23noUKB_2018", "scz2021", "bp", "bp1", "bp2")
+### regression analysis function
+
+dt <-  data.frame(model=character(),trait=character(),
+                 beta=numeric(),se=numeric(),P=numeric())
+
+
+  ## loop for regression
+for (grs in grsList1) {
+    reg_j <- glm(paste0('psyMDD ~ ', grs, ' + PC1 + PC2 + PC3 + PC4 + PC5 + sex + age'), data=data, family="binomial")
+    
+    # put in the excel
+    dt <-dt %>% 
+      add_row(model=paste('uni'),
+              trait=paste(grs), 
+              beta = summary(reg_j)$coef[paste(grs),"Estimate"],
+              se = summary(reg_j)$coef[paste(grs),"Std. Error"],
+              P=summary(reg_j)$coef[paste(grs),"Pr(>|z|)"])
+    }
+dt <-dt %>% 
+  mutate(or=round(exp(beta), 2),
+         lo=round(exp(beta-1.96*se),2),
+         hi=round(exp(beta+1.96*se),2))
+
+write.csv(dt, file = "/file_path/ukb_prs_agesex_hierarchy_uni.csv", row.names = FALSE)
+
+############### Multiple PRS ################
+
+reg <- glm(psyMDD ~ mdd_no23noUKB_2018 + scz2021 + bp + PC1 + PC2 + PC3 + PC4 + PC5 + sex + age, data=data, family="binomial")
+
+summary(reg)$coef 
+
+dt2 <- as.data.table(summary(reg)$coef[c('mdd_no23noUKB_2018', 'scz2021','bp'),c("Estimate","Std. Error", "Pr(>|z|)")], keep.rownames = T)
+
+# Add bp subtype results
+
+grsList2 = c("bp1", "bp2")
+
+for (grs in grsList2) {
+    reg_i <- glm(paste0('psyMDD ~ ', grs, ' + mdd_no23noUKB_2018 + scz2021 + PC1 + PC2 + PC3 + PC4 + PC5 + sex + age'), data=data, family="binomial")
+    # put in the excel
+    dt2 <-dt2 %>% 
+      add_row(as.data.table(summary(reg_i)$coef[c('mdd_no23noUKB_2018', 'scz2021',grs),c("Estimate","Std. Error", "Pr(>|z|)")], keep.rownames = T))
+}
+
+names(dt2) <- c('prs', 'beta', 'se', 'P')
+
+dt2 <-dt2 %>% 
+  mutate(or=round(exp(beta), 2),
+         lo=round(exp(beta-1.96*se),2),
+         hi=round(exp(beta+1.96*se),2))
+
+write.csv(dt2, file = "/file_path/ukb_prs_agesex_hierarchy_multi.csv", row.names = FALSE)
+```
+
+### Compare psychotic MDD vs severe non-psychotic MDD
+Rerun regression models comparing psychotic MDD and severe non-psychoitic MDD 
+*Add in eTable 14b
+
+```{r}
+# Sample size
+table(prs_hierarchy$severe_mdd, useNA = 'ifany')
+
+data <- prs_hierarchy %>%
+  filter(severe_mdd %in% c(2, 3) ) %>%
+  mutate(severe_mdd=as.factor(severe_mdd-2))
+
+table(data$severe_mdd, useNA = 'ifany')
+
+############### Single PRS ################
+grsList = c("mdd_no23noUKB_2018", "scz2021", "bp", "bp1", "bp2")
+### regression analysis function
+
+dt <-  data.frame(model=character(),trait=character(),
+                 beta=numeric(),se=numeric(),P=numeric())
+
+
+  ## loop for regression
+for (grs in grsList) {
+    reg_k <- glm(paste0('severe_mdd ~ ', grs, ' + PC1 + PC2 + PC3 + PC4 + PC5 + sex + age'), data=data, family="binomial")
+    
+    # put in the excel
+    dt <-dt %>% 
+      add_row(model=paste('uni'),
+              trait=paste(grs), 
+              beta = summary(reg_k)$coef[paste(grs),"Estimate"],
+              se = summary(reg_k)$coef[paste(grs),"Std. Error"],
+              P=summary(reg_k)$coef[paste(grs),"Pr(>|z|)"])
+    }
+dt <-dt %>% 
+  mutate(or=round(exp(beta), 2),
+         lo=round(exp(beta-1.96*se),2),
+         hi=round(exp(beta+1.96*se),2))
+
+write.csv(dt, file = "/file_path/ukb_prs_agesex_severeMDD_hierarchy_uni.csv", row.names = FALSE)
+
+############### Multiple PRS ################
+reg <- glm(severe_mdd ~ mdd_no23noUKB_2018 + scz2021 + bp + PC1 + PC2 + PC3 + PC4 + PC5 + sex + age, data=data, family="binomial")
+
+summary(reg)$coef 
+
+dt2 <- as.data.table(summary(reg)$coef[c('mdd_no23noUKB_2018', 'scz2021','bp'),c("Estimate","Std. Error", "Pr(>|z|)")], keep.rownames = T)
+
+# Add bp subtype results
+
+grsList2 = c("bp1", "bp2")
+
+for (grs in grsList2) {
+    reg_h <- glm(paste0('severe_mdd ~ ', grs, ' + mdd_no23noUKB_2018 + scz2021 + PC1 + PC2 + PC3 + PC4 + PC5 + sex + age'), data=data, family="binomial")
+    # put in the excel
+    dt2 <-dt2 %>% 
+      add_row(as.data.table(summary(reg_h)$coef[c('mdd_no23noUKB_2018', 'scz2021', grs),c("Estimate","Std. Error", "Pr(>|z|)")], keep.rownames = T))
+}
+
+names(dt2) <- c('prs', 'beta', 'se', 'P')
+
+dt2 <-dt2 %>% 
+  mutate(or=round(exp(beta), 2),
+         lo=round(exp(beta-1.96*se),2),
+         hi=round(exp(beta+1.96*se),2))
+
+write.csv(dt2, file = "/file_path/ukb_prs_agesex_severeMDD_hierarchy_multi.csv", row.names = FALSE)
+```
+
