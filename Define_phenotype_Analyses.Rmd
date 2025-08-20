@@ -393,7 +393,7 @@ dt <-dt %>%
          lo=round(exp(beta-1.96*se),2),
          hi=round(exp(beta+1.96*se),2))
 
-write.csv(dt, file = "/nfs/home/thingu/psychoticMDD/prs_analysis/results/ukb_prs_agesex_severeMDD_uni.csv", row.names = FALSE)
+write.csv(dt, file = "/file_path/ukb_prs_agesex_severeMDD_uni.csv", row.names = FALSE)
 
 ############### Multiple PRS ################
 reg <- glm(severe_mdd ~ mdd_no23noUKB_2018 + scz2021 + bp + PC1 + PC2 + PC3 + PC4 + PC5 + sex + age, data=data, family="binomial")
