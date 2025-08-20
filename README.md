@@ -7,7 +7,6 @@ Nguyen TD, Meijsen JJ, Sigström R, Kuja-Halkola R, Xiong Y, Harder A, Kowalec K
 Genetic insights into psychotic major depressive disorder: bridging the mood-psychotic disorder spectrum. 
 EBioMedicine. 2025 Feb;112:105576. doi: 10.1016/j.ebiom.2025.105576. Epub 2025 Jan 30. PMID: 39889373; PMCID: PMC11830301.
 
-# DERIVE PHENOTYPE IN UKB
-## EXTRACT DATA UKB
+# EXTRACT UBK DATA 
 The file prsUKB_20240ct.Rmd contains code to extract data and define related variables from UKB original datasets.
 
